@@ -28,15 +28,13 @@ def parse_arguments() -> argparse.Namespace:
         epilog=textwrap.dedent('''
         Examples:
           python main.py --attack dictionary --hash md5 --hashvalue 5f4dcc3b5aa765d61d8327deb882cf99 --dictionary wordlist.txt
-          python main.py --attack dictionary --hash md5 --hashvalue 5f4dcc3b5aa765d61d8327deb882cf99 --dictionary rockyou.txt --threads 8 --advanced-mode
-          
-        Cracking complex passwords:
-          python main.py --attack dictionary --hash md5 --hashvalue 5f4dcc3b5aa765d61d8327deb882cf99 --dictionary rockyou.txt --advanced-mode --max-transformations 20
+          python main.py --attack pattern --hash md5 --hashvalue 5f4dcc3b5aa765d61d8327deb882cf99 --dictionary rockyou.txt
+          python main.py --attack brute_force --hash md5 --hashvalue 5f4dcc3b5aa765d61d8327deb882cf99 --charset lower+digits
         ''')
     )
 
     # Required arguments
-    parser.add_argument("--attack", required=True, choices=["dictionary"],
+    parser.add_argument("--attack", required=True, choices=["dictionary", "pattern", "brute_force"],
                         help="Type of attack to perform")
     parser.add_argument("--hash", required=True, choices=["md5", "sha1", "sha256"],
                         help="Hashing algorithm used")
@@ -72,8 +70,11 @@ def parse_arguments() -> argparse.Namespace:
                         help="Prioritize common passwords first")
     parser.add_argument("--prioritize-length", action="store_true", default=True,
                         help="Prioritize words by length (favors 4-10 characters)")
-    parser.add_argument("--target-pattern", 
-                        help="Specify target pattern hints (e.g., 'word+number', 'leet')")
+    
+    # Pattern selection option - renamed to avoid conflict
+    parser.add_argument("--pattern-type", 
+                      choices=["leet", "keyboard", "common_words", "year_patterns", "special_char"],
+                      help="Specify target pattern type (for pattern attack)")
     
     # Output options
     parser.add_argument("--verbose", "-v", action="store_true",
@@ -88,6 +89,28 @@ def parse_arguments() -> argparse.Namespace:
                         help="Check hash format and correct if needed")
     parser.add_argument("--no-check-hash", action="store_false", dest="check_hash",
                         help="Do not check hash format")
+    
+    # Demo mode and visualization options
+    parser.add_argument("--demo-mode", action="store_true",
+                        help="Enable demonstration mode with visual enhancements")
+    parser.add_argument("--max-attempts", type=int, default=10000,
+                        help="Maximum number of password attempts")
+    parser.add_argument("--show-progress", action="store_true", default=True,
+                        help="Show progress bar")
+    parser.add_argument("--no-progress", action="store_false", dest="show_progress",
+                        help="Hide progress bar")
+    
+    # Brute force specific options
+    parser.add_argument("--min-length", type=int, default=1,
+                      help="Minimum password length for brute force attack")
+    parser.add_argument("--max-length", type=int, default=5,
+                      help="Maximum password length for brute force attack")
+    parser.add_argument("--charset", default="lower+digits",
+                      choices=["lower", "upper", "digits", "special", "lower+digits", 
+                              "lower+upper", "lower+upper+digits", "all"],
+                      help="Character set to use for brute force attack")
+    parser.add_argument("--custom-charset", 
+                      help="Custom character set (overrides --charset)")
 
     args = parser.parse_args()
 
@@ -95,7 +118,7 @@ def parse_arguments() -> argparse.Namespace:
     if args.attack == "dictionary" and not args.dictionary:
         parser.error("--dictionary is required for dictionary attack")
     
-    # Validate dictionary file exists
+    # Validate dictionary file exists if specified
     if args.dictionary and not os.path.isfile(args.dictionary):
         parser.error(f"Dictionary file not found: {args.dictionary}")
     
@@ -114,6 +137,15 @@ def parse_arguments() -> argparse.Namespace:
     # Warn about max transformations
     if args.max_transformations > 25:
         print(f"[!] Warning: High transformation count ({args.max_transformations}) will significantly increase processing time")
+
+    # Validate brute force options
+    if args.attack == "brute_force":
+        if args.max_length > 8:
+            print(f"[!] Warning: Brute force with max length {args.max_length} may take a very long time")
+        if args.min_length < 1:
+            parser.error("Minimum length must be at least 1")
+        if args.min_length > args.max_length:
+            parser.error("Minimum length cannot be greater than maximum length")
 
     return args
 
@@ -140,17 +172,28 @@ def get_attack_config(args: argparse.Namespace) -> Dict[str, Any]:
         'advanced_mode': args.advanced_mode,
         'prioritize_common': args.prioritize_common,
         'prioritize_length': args.prioritize_length,
+        'demo_mode': args.demo_mode if hasattr(args, 'demo_mode') else False,
+        'max_attempts': args.max_attempts if hasattr(args, 'max_attempts') else 10000,
+        'show_progress': args.show_progress if hasattr(args, 'show_progress') else True,
     }
     
-    # Add target pattern if specified
-    if args.target_pattern:
-        config['target_pattern'] = args.target_pattern
+    # Add pattern type if specified using the renamed argument
+    if hasattr(args, 'pattern_type') and args.pattern_type:
+        config['target_pattern'] = args.pattern_type
     
     # Add attack-specific parameters
     if args.attack == "dictionary":
         config['dictionary_path'] = args.dictionary
         config['chunk_size'] = args.chunk_size
         config['quick_mode'] = args.quick_mode
+    
+    # Add brute force specific parameters
+    if args.attack == "brute_force":
+        config['min_length'] = args.min_length
+        config['max_length'] = args.max_length
+        config['charset'] = args.charset
+        if hasattr(args, 'custom_charset') and args.custom_charset:
+            config['custom_charset'] = args.custom_charset
     
     # Add output file if specified
     if args.output:
@@ -188,8 +231,12 @@ def print_summary(attack_type: str, hash_type: str, wordlist: str, threads: int)
     print(f"    Attack Type: {attack_type}")
     print(f"    Hash Algorithm: {hash_type}")
     
-    if wordlist:
+    if wordlist and attack_type == "dictionary":
         print(f"    Wordlist: {wordlist}")
+    elif attack_type == "pattern":
+        print(f"    Pattern-based attack: Using rule transformations")
+    elif attack_type == "brute_force":
+        print(f"    Brute force attack: Using BFS approach")
         
     print(f"    Threads: {threads}")
     print()
@@ -205,7 +252,7 @@ def get_dictionary_info(path: str) -> Dict[str, Any]:
     Returns:
         Dictionary containing file information
     """
-    if not os.path.isfile(path):
+    if not path or not os.path.isfile(path):
         return {
             'exists': False,
             'size_bytes': 0,

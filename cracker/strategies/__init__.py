@@ -12,10 +12,14 @@ from cracker.hash_manager import HashManager
 from cracker.cli import get_attack_config
 from cracker.strategies.base import BaseStrategy
 from cracker.strategies.dictionary import DictionaryAttack
+from cracker.strategies.pattern_based import PatternBasedAttack  # New strategy
+from cracker.strategies.brute_force import BruteForceAttack     # New strategy
 
 # Registry of available attack strategies
 STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "dictionary": DictionaryAttack,
+    "pattern": PatternBasedAttack,     # Added
+    "brute_force": BruteForceAttack,   # Added
 }
 
 
@@ -55,5 +59,7 @@ def list_available_strategies() -> Dict[str, str]:
         Dictionary mapping strategy names to descriptions
     """
     return {
-        "dictionary": "Dictionary-based attack using wordlists",
+        "dictionary": "Dictionary-based attack using wordlists with a Trie data structure",
+        "pattern": "Pattern-based attack using rule transformations and key patterns",
+        "brute_force": "Targeted brute force attack using Breadth-First Search",
     }
